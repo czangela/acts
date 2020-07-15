@@ -182,11 +182,17 @@ int main(int argc, char** argv) {
   config.impactMax = 10.;
 
   // cuda
+
   cudaDeviceProp prop;
   ACTS_CUDA_ERROR_CHECK(cudaGetDeviceProperties(&prop, deviceID));
-  printf("\n GPU Device %d: \"%s\" with compute capability %d.%d\n\n", deviceID,
-         prop.name, prop.major, prop.minor);
-  config.maxBlockSize = prop.maxThreadsPerBlock;
+  printf("\n GPU Device %d: \"%s\" with compute capability %d.%d, registers per block: %d thread dim x: %d\n\n", deviceID,
+         prop.name, prop.major, prop.minor, prop.regsPerBlock, prop.maxThreadsDim[0]);
+
+  // print device properties
+  // printf("Maxs block per multiprocessor: %d\n", prop.maxBlocksPerMultiProcessor);
+
+  config.maxBlockSize = prop.maxThreadsPerBlock/8;
+
   config.nTrplPerSpBLimit = nTrplPerSpBLimit;
   config.nAvgTrplPerSpBLimit = nAvgTrplPerSpBLimit;
 
