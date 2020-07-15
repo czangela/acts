@@ -575,134 +575,142 @@ __global__ void cuSearchTriplet(const int*   nSpTcompPerSpM,
 
   int offset(0);
 
-  while (offset < *nSpTcompPerSpM){
+  while (offset < *nSpTcompPerSpM){    
+    bool isPassed(1);
+    float impact;
+    float invHelix;
     if (threadIdx.x+offset < *nSpTcompPerSpM){
-      bool isPassed(1);
-
-      float cotThetaT  = circTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*1];
-      float iDeltaRT   = circTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*2];
-      float ErT        = circTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*3];
-      float Ut         = circTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*4];
-      float Vt         = circTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*5];
-
+      
+      //float Zot        = circTcompMatPerSpM[threadId+(*nSpTcompPerSpM)*0];
+      float cotThetaT  = circTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*1];
+      float iDeltaRT   = circTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*2];
+      float ErT        = circTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*3];
+      float Ut         = circTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*4];
+      float Vt         = circTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*5];
+      
       // add errors of spB-spM and spM-spT pairs and add the correlation term
       // for errors on spM
       float error2 = ErT + ErB +
-		2 * (cotThetaB * cotThetaT * varianceRM + varianceZM) * iDeltaRB * iDeltaRT;
+	2 * (cotThetaB * cotThetaT * varianceRM + varianceZM) * iDeltaRB * iDeltaRT;
+      
+      float deltaCotTheta = cotThetaB - cotThetaT;
+      float deltaCotTheta2 = deltaCotTheta * deltaCotTheta;
+      float error;
+      float dCotThetaMinusError2;
+      
+      // if the error is larger than the difference in theta, no need to
+      // compare with scattering
+      if (deltaCotTheta2 - error2 > 0) {
+	deltaCotTheta = fabsf(deltaCotTheta);
+	// if deltaTheta larger than the scattering for the lower pT cut, skip
+	error = sqrtf(error2);
+	dCotThetaMinusError2 =
+	  deltaCotTheta2 + error2 - 2 * deltaCotTheta * error;
+	// avoid taking root of scatteringInRegion
+	// if left side of ">" is positive, both sides of unequality can be
+	// squared
+	// (scattering is always positive)
+	
+	if (dCotThetaMinusError2 > scatteringInRegion2) {
+	  isPassed = 0;
+	}
+      }
+      
+      // protects against division by 0
+      float dU = Ut - Ub;
+      if (dU == 0.) {
+	isPassed = 0;
+      }
+      
+      // A and B are evaluated as a function of the circumference parameters
+      // x_0 and y_0
+      float A = (Vt - Vb) / dU;
+      float S2 = 1. + A * A;
+      float B = Vb - A * Ub;
+      float B2 = B * B;
+      // sqrtf(S2)/B = 2 * helixradius
+      // calculated radius must not be smaller than minimum radius
+      if (S2 < B2 * (minHelixDiameter2)) {
+	isPassed = 0;
+      }
+      
+      // 1/helixradius: (B/sqrtf(S2))/2 (we leave everything squared)
+      float iHelixDiameter2 = B2 / S2;
+      // calculate scattering for p(T) calculated from seed curvature
+      float pT2scatter = 4 * iHelixDiameter2 * (pT2perRadius);
+      // TODO: include upper pT limit for scatter calc
+      // convert p(T) to p scaling by sin^2(theta) AND scale by 1/sin^4(theta)
+      // from rad to deltaCotTheta
+      float p2scatter = pT2scatter * iSinTheta2;
+      // if deltaTheta larger than allowed scattering for calculated pT, skip
+      if ((deltaCotTheta2 - error2 > 0) &&
+	  (dCotThetaMinusError2 >
+           p2scatter * (sigmaScattering) * (sigmaScattering))) {
+	isPassed = 0;
+      }
+      // A and B allow calculation of impact params in U/V plane with linear
+      // function
+      // (in contrast to having to solve a quadratic function in x/y plane)
+      impact = fabsf((A - B * rM) * rM);
+      invHelix = B / sqrtf(S2);
+      if (impact > (impactMax)){
+	isPassed = 0;
+      }     
+    }
+    
+    __syncthreads();
+      
+    if (threadIdx.x+offset < *nSpTcompPerSpM){      
+      // The index will be different (and not deterministic) becuase of atomic operation
+      // It will be resorted after kernel call
+      if (isPassed == 1){
+	int tPos = atomicAdd(nTrplPerSpB,1);
 
-		float deltaCotTheta = cotThetaB - cotThetaT;
-		float deltaCotTheta2 = deltaCotTheta * deltaCotTheta;
-		float error;
-		float dCotThetaMinusError2;
-
-		// if the error is larger than the difference in theta, no need to
-		// compare with scattering
-		if (deltaCotTheta2 - error2 > 0) {
-		deltaCotTheta = fabsf(deltaCotTheta);
-		// if deltaTheta larger than the scattering for the lower pT cut, skip
-		error = sqrtf(error2);
-		dCotThetaMinusError2 =
-		deltaCotTheta2 + error2 - 2 * deltaCotTheta * error;
-		// avoid taking root of scatteringInRegion
-		// if left side of ">" is positive, both sides of unequality can be
-		// squared
-		// (scattering is always positive)
-
-		if (dCotThetaMinusError2 > scatteringInRegion2) {
-		isPassed = 0;
-		}
-		}
-
-		// protects against division by 0
-		float dU = Ut - Ub;
-		if (dU == 0.) {
-		isPassed = 0;
-		}
-
-		// A and B are evaluated as a function of the circumference parameters
-		// x_0 and y_0
-		float A = (Vt - Vb) / dU;
-		float S2 = 1. + A * A;
-		float B = Vb - A * Ub;
-		float B2 = B * B;
-		// sqrtf(S2)/B = 2 * helixradius
-		// calculated radius must not be smaller than minimum radius
-		if (S2 < B2 * minHelixDiameter2) {
-		isPassed = 0;
-		}
-
-		// 1/helixradius: (B/sqrtf(S2))/2 (we leave everything squared)
-		float iHelixDiameter2 = B2 / S2;
-		// calculate scattering for p(T) calculated from seed curvature
-		float pT2scatter = 4 * iHelixDiameter2 * pT2perRadius;
-		// TODO: include upper pT limit for scatter calc
-		// convert p(T) to p scaling by sin^2(theta) AND scale by 1/sin^4(theta)
-		// from rad to deltaCotTheta
-		float p2scatter = pT2scatter * iSinTheta2;
-		// if deltaTheta larger than allowed scattering for calculated pT, skip
-		if ((deltaCotTheta2 - error2 > 0) &&
-		(dCotThetaMinusError2 >
-		p2scatter * sigmaScattering * sigmaScattering)) {
-		isPassed = 0;
-		}
-		// A and B allow calculation of impact params in U/V plane with linear
-		// function
-		// (in contrast to having to solve a quadratic function in x/y plane)
-		float impact = fabsf((A - B * rM) * rM);
-		float invHelix = B / sqrtf(S2);
-		if (impact > impactMax){
-		isPassed = 0;
-		}
-
-		__syncthreads();
-
-		// The index will be different (and not deterministic) becuase of atomic operation
-		// It will be resorted after kernel call
-		if (isPassed == 1){
-		int tPos = atomicAdd(nTrplPerSpB,1);
-
-		if (tPos<nTrplPerSpBLimit){
-
-		triplets[tPos].weight = 0;
-		triplets[tPos].bIndex = BcompIndex[blockIdx.x];
-		triplets[tPos].tIndex = TcompIndex[threadIdx.x+offset];
-		triplets[tPos].topRadius = spTcompMatPerSpM[threadIdx.x+offset+nSpTcompPerSpM_Max*3];
-		triplets[tPos].impactParameter = impact;
-		triplets[tPos].invHelixDiameter = invHelix;
-
-		}
+	if (tPos< nTrplPerSpBLimit){
+	
+	  triplets[tPos].weight = 0;
+	  triplets[tPos].bIndex = BcompIndex[blockIdx.x];
+	  triplets[tPos].tIndex = TcompIndex[threadIdx.x+offset];
+	  triplets[tPos].topRadius = spTcompMatPerSpM[threadIdx.x+offset+(nSpTcompPerSpM_Max)*3];
+	  triplets[tPos].impactParameter = impact;
+	  triplets[tPos].invHelixDiameter = invHelix;
+	  
+	}
       }
     }
     offset += blockDim.x;
-  }
+  }    
+
   __syncthreads();
 
   if (threadIdx.x == 0 && *nTrplPerSpB > nTrplPerSpBLimit){
     *nTrplPerSpB = nTrplPerSpBLimit;
   }
 
-  //printf("Thread index: %d, nTrplPerSpB: %d\n", threadIdx.x, *nTrplPerSpB);
-  // bubble sort tIndex
-  if (threadIdx.x < *nTrplPerSpB){
-    for (int i = 0; i < *nTrplPerSpB/2+1; i++){
-      int j = threadIdx.x;
-      if (j % 2 == 0 && j<*nTrplPerSpB-1){
-	if (triplets[j+1].tIndex < triplets[j].tIndex){
-	  Triplet tempVal = triplets[j];
-	  triplets[j] = triplets[j+1];
-	  triplets[j+1] = tempVal;
+int jj = threadIdx.x;
+
+// bubble sort tIndex
+  for (int i = 0; i < *nTrplPerSpB/2+1; i++){
+    if (threadIdx.x < *nTrplPerSpB){    
+      if (jj % 2 == 0 && jj<*nTrplPerSpB-1){
+	if (triplets[jj+1].tIndex < triplets[jj].tIndex){
+	  Triplet tempVal = triplets[jj];
+	  triplets[jj] = triplets[jj+1];	  
+	  triplets[jj+1] = tempVal;
 	}
       }
-      __syncthreads();
-      if (j % 2 == 1 && j<*nTrplPerSpB-1){
-	if (triplets[j+1].tIndex < triplets[j].tIndex){
-	  Triplet tempVal = triplets[j];
-	  triplets[j] = triplets[j+1];
-	  triplets[j+1] = tempVal;
-	}
-      }
-      __syncthreads();
     }
+    __syncthreads();
+    if (threadIdx.x < *nTrplPerSpB){    
+      if (jj % 2 == 1 && jj<*nTrplPerSpB-1){
+	if (triplets[jj+1].tIndex < triplets[jj].tIndex){
+	  Triplet tempVal = triplets[jj];
+	  triplets[jj] = triplets[jj+1];
+	  triplets[jj+1] = tempVal;
+	}
+      }
+    }     
+    __syncthreads();
   }
 
   __syncthreads();
