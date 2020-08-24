@@ -93,35 +93,28 @@ std::vector<const SpacePoint*> readFile(std::string filename) {
 int main(int argc, char** argv) {
   std::string file{"sp.txt"};
   bool help(false);
-  bool quiet(false);
   int groups(500);
 
   int opt;
-  while ((opt = getopt(argc, argv, "hf:g:q")) != -1) {
+  while ((opt = getopt(argc, argv, "hf:g:")) != -1) {
     switch (opt) {
       case 'f':
         file = optarg;
         break;
-      case 'q':
-        quiet = true;
+      case 'g':
+        groups = atoi(optarg);
         break;
       case 'h':
         help = true;
         [[fallthrough]];
-      case 'g':
-        groups = atoi(optarg);
-        break;
       default: /* '?' */
-        std::cerr << "Usage: " << argv[0] << " [-hq] [-f FILENAME]\n";
+        std::cerr << "Usage: " << argv[0] << " [-h] [-f FILENAME] [-g groups]\n";
         if (help) {
           std::cout << "      -h : this help" << std::endl;
           std::cout
-              << "      -f FILE : read spacepoints from FILE. Default is \""
-              << file << "\"" << std::endl;
-          std::cout << "      -q : don't print out all found seeds"
-                    << std::endl;
+              << "      -f <FILE> : read spacepoints from FILE." << std::endl;
+          std::cout << "      -g <NUM> : limit the number of groups to analyze" << std::endl;
         }
-
         exit(EXIT_FAILURE);
     }
   }
@@ -185,7 +178,8 @@ int main(int argc, char** argv) {
 
   std::vector<std::vector<Acts::Seed<SpacePoint>>> seedVectorA;
   std::vector<std::vector<Acts::Seed<SpacePoint>>> seedVectorB;
-  std::size_t nSeedsA = 0, nSeedsB = 0;
+  std::size_t nSeedsA = 0;
+  std::size_t nSeedsB = 0;
   
   auto start = std::chrono::system_clock::now();
   auto groupIt = spGroup.begin();
